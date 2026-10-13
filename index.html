@@ -241,11 +241,26 @@ function render(){
   const m=items.filter(i=>(i.date||"").startsWith(key));
   const inc=m.filter(i=>i.type==="in").reduce((s,i)=>s+i.amount,0);
   const out=m.filter(i=>i.type==="out").reduce((s,i)=>s+i.amount,0);
-  const bal=inc-out;
+  /* debts move cash: lending takes money out, repayments bring it back */
+  let lent=0,back=0,borrowed=0,repaid=0;
+  (typeof debts!=="undefined"?debts:[]).forEach(d=>{
+    if((d.date||"").startsWith(key)){if(d.dir==="took")borrowed+=d.amount;else lent+=d.amount}
+    const pays=d.payments&&d.payments.length?d.payments:((d.returned||0)>0?[{date:d.closedAt||d.date,amount:d.returned}]:[]);
+    pays.forEach(p=>{if((p.date||"").startsWith(key)){if(d.dir==="took")repaid+=p.amount;else back+=p.amount}});
+  });
+  const flow=back-lent+borrowed-repaid;
+  const bal=inc-out+flow;
   $("sIn").textContent=fmt(inc);$("sOut").textContent=fmt(out);
   $("sBal").textContent=(bal<0?"−":"")+fmt(Math.abs(bal));
   $("sBal").className="num "+(bal<0?"c-out":"");
-  $("sRate").textContent=inc>0?(bal>=0?"Сэкономлено "+Math.round(bal/inc*100)+"% дохода":"Расходы больше доходов на "+fmt(-bal)):"";
+  const parts=[];
+  if(lent)parts.push("дал в долг "+fmt(lent));
+  if(back)parts.push("вернули "+fmt(back));
+  if(borrowed)parts.push("взял в долг "+fmt(borrowed));
+  if(repaid)parts.push("отдал долг "+fmt(repaid));
+  const own=inc-out;
+  const rate=inc>0?(own>=0?"Сэкономлено "+Math.round(own/inc*100)+"% дохода":"Расходы больше доходов на "+fmt(-own)):"";
+  $("sRate").textContent=[rate,parts.length?"С учётом долгов: "+parts.join(", "):""].filter(Boolean).join(". ");
 
   const by={};m.filter(i=>i.type==="out").forEach(i=>by[i.cat]=(by[i.cat]||0)+i.amount);
   const cats=Object.entries(by).sort((a,b)=>b[1]-a[1]);const max=cats[0]?cats[0][1]:1;
@@ -320,7 +335,7 @@ function debtRow(d){
   const acts=r.querySelector(".acts");
   const mk=(t,cls,fn)=>{const b=document.createElement("button");b.type="button";b.textContent=t;if(cls)b.className=cls;b.onclick=fn;acts.appendChild(b);return b};
   if(!d.closed){
-    mk(d.dir==="took"?"Отдал всё":"Вернул всё","full",async()=>{try{await debtUpd(d.id,{returned:d.amount,closed:true,closedAt:today()});toast("Долг закрыт")}catch(e){toast("Не удалось сохранить")}});
+    mk(d.dir==="took"?"Отдал всё":"Вернул всё","full",async()=>{try{await debtUpd(d.id,{returned:d.amount,closed:true,closedAt:today(),payments:[...(d.payments||[]),{date:today(),amount:Math.round((d.amount-(d.returned||0))*100)/100}]});toast("Долг закрыт")}catch(e){toast("Не удалось сохранить")}});
     mk(d.dir==="took"?"Отдал часть":"Вернул часть","",()=>{
       if(r.querySelector(".ret"))return;
       const box=document.createElement("div");box.className="ret";
@@ -329,7 +344,7 @@ function debtRow(d){
       box.querySelector("button").onclick=async()=>{
         const v=num(inp.value);if(!(v>0)){inp.focus();return}
         const ret=Math.min(d.amount,Math.round(((d.returned||0)+v)*100)/100);
-        try{await debtUpd(d.id,{returned:ret,closed:ret>=d.amount,closedAt:ret>=d.amount?today():null});toast(ret>=d.amount?"Долг закрыт":"Записано")}catch(e){toast("Не удалось сохранить")}
+        try{await debtUpd(d.id,{returned:ret,closed:ret>=d.amount,closedAt:ret>=d.amount?today():null,payments:[...(d.payments||[]),{date:today(),amount:Math.round((ret-(d.returned||0))*100)/100}]});toast(ret>=d.amount?"Долг закрыт":"Записано")}catch(e){toast("Не удалось сохранить")}
       };
       r.appendChild(box);inp.focus();
     });
@@ -349,6 +364,7 @@ function renderDebts(){
   if(!open.length)L.innerHTML='<div class="empty">Открытых долгов нет. Впишите имя и сумму и нажмите «Добавить долг».</div>';
   open.forEach(d=>L.appendChild(debtRow(d)));
   $("dDoneBox").hidden=!done.length;$("dDone").innerHTML="";done.forEach(d=>$("dDone").appendChild(debtRow(d)));
+  render();
 }
 renderDebts();
 
