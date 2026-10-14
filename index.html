@@ -122,11 +122,25 @@ h2{font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.12e
 .dh{border-bottom-color:var(--line)}
 .debt{border-top-color:var(--line)}
 .debt .acts button,.debt .ret button{background:var(--card2);border-color:var(--line)}
-.toast{background:var(--accent);color:var(--accent-ink)}
+.toast{background:var(--accent);color:var(--accent-ink);width:max-content;max-width:calc(100% - 32px);text-align:center;border-radius:14px;padding:10px 16px}
 .seg.cur{grid-template-columns:repeat(3,1fr)}
 .seg.cur button{font-family:var(--mono);font-weight:700}
 .sub.other{color:var(--accent);margin-top:4px}
 .sub.other:empty{display:none}
+.dayrep{display:flex;flex-direction:column;gap:12px}
+.dayrep h2{margin:0}
+.dtop{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.month.small button{width:32px;height:32px;font-size:1rem}
+.month.small span{min-width:104px;font-size:.88rem}
+.month button:disabled{opacity:.35;cursor:default}
+.drgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.drgrid .num{font-size:1.45rem}
+#drOut{color:var(--out)}
+#drAvg b{color:var(--ink);font-weight:600}
+#drCats .bar:last-child{margin-bottom:0}
+.running{display:flex;gap:8px;flex-wrap:wrap;font-size:.85rem;color:var(--muted)}
+.running span{background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:5px 11px}
+.running b{font-family:var(--mono);font-weight:500;color:var(--out)}
 html,body{margin:0}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{-webkit-text-size-adjust:100%}
 </style>
 </head>
@@ -160,6 +174,7 @@ html,body{margin:0}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom
       <button type="button" id="tIn" aria-pressed="false">Доход</button>
     </div>
     <label class="amt"><input id="amount" inputmode="decimal" placeholder="0" aria-label="Сумма"><b id="amtSym">€</b></label>
+    <div class="running" id="running" aria-live="polite"></div>
     <div class="chips" id="cats" role="group" aria-label="Категория"></div>
     <div class="row">
       <input id="note" placeholder="Комментарий (необязательно)" maxlength="80">
@@ -167,6 +182,23 @@ html,body{margin:0}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom
     </div>
     <button class="add" id="addBtn" type="submit" disabled>Записать</button>
   </form>
+
+  <section class="panel dayrep" aria-label="Отчёт за день">
+    <div class="dtop">
+      <h2 id="drTitle">Сегодня</h2>
+      <div class="month small">
+        <button type="button" id="dPrev" aria-label="Предыдущий день">‹</button>
+        <span id="drDate"></span>
+        <button type="button" id="dNext" aria-label="Следующий день">›</button>
+      </div>
+    </div>
+    <div class="drgrid">
+      <div><div class="lbl">Потрачено</div><div class="num c-out" id="drOut">0</div></div>
+      <div><div class="lbl">Получено</div><div class="num c-in" id="drIn">0</div></div>
+    </div>
+    <div class="sub" id="drAvg"></div>
+    <div id="drCats"></div>
+  </section>
 
   <section class="panel" aria-label="Расходы по категориям">
     <h2>Куда ушли деньги</h2>
@@ -261,10 +293,12 @@ $("f").onsubmit=async e=>{
   const it={type,cur,amount:Math.round(amt()*100)/100,cat,note:$("note").value.trim(),date:$("date").value,created:Date.now()};
   $("addBtn").disabled=true;
   try{
+    if(typeof dayView!=="undefined")dayView=it.date;
     await addItem(it);
     $("amount").value="";$("note").value="";cat=null;drawCats();
     const d=new Date(it.date);if(d.getMonth()!==view.getMonth()||d.getFullYear()!==view.getFullYear()){view=new Date(d.getFullYear(),d.getMonth(),1);render()}
-    toast("Записано");
+    if(it.type==="out"){const {day,month}=spentTotals();toast("−"+fmt(it.amount)+". Сегодня: "+fmt(day)+", за месяц: "+fmt(month))}
+    else toast("Записано");
   }catch(err){toast(err&&err.code==="quota_exceeded"?"Хранилище заполнено":"Не удалось сохранить, попробуйте ещё раз")}
   check();
 };
@@ -276,6 +310,7 @@ $("next").onclick=()=>{view=new Date(view.getFullYear(),view.getMonth()+1,1);ren
 
 /* ---------- render ---------- */
 function render(){
+  if(typeof renderDay==="function"&&typeof dayView!=="undefined")renderDay();
   $("mlabel").textContent=view.toLocaleDateString("ru-RU",{month:"long",year:"numeric"}).replace(" г.","");
   const key=view.getFullYear()+"-"+pad(view.getMonth()+1);
   const inMonth=items.filter(i=>(i.date||"").startsWith(key));
@@ -398,6 +433,63 @@ function debtRow(d){
     else{del.dataset.armed=1;del.textContent="Точно удалить?";setTimeout(()=>{if(del.isConnected){delete del.dataset.armed;del.textContent="Удалить"}},2500)}
   });
   return r;
+}
+/* ---------- daily report ---------- */
+let dayView=today();
+const isoOf=d=>d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
+const shiftDay=(iso,n)=>{const d=new Date(iso+"T12:00");d.setDate(d.getDate()+n);return isoOf(d)};
+$("dPrev").onclick=()=>{dayView=shiftDay(dayView,-1);renderDay()};
+$("dNext").onclick=()=>{if(dayView<today()){dayView=shiftDay(dayView,1);renderDay()}};
+const plural=(n,a,b,c)=>{const m10=n%10,m100=n%100;return m10===1&&m100!==11?a:(m10>=2&&m10<=4&&(m100<10||m100>=20)?b:c)};
+function spentTotals(){
+  const t=today(),mk=t.slice(0,7);
+  const mine=items.filter(i=>curOf(i)===cur&&i.type==="out");
+  return{day:mine.filter(i=>i.date===t).reduce((s,i)=>s+i.amount,0),month:mine.filter(i=>(i.date||"").startsWith(mk)).reduce((s,i)=>s+i.amount,0)};
+}
+function renderRunning(){
+  const {day,month}=spentTotals();const el=$("running");el.innerHTML="";
+  [["Сегодня потрачено",day],["За месяц",month]].forEach(([l,v])=>{
+    const s=document.createElement("span");s.append(l+": ");const b=document.createElement("b");b.textContent=fmt(v);s.append(b);el.appendChild(s);
+  });
+}
+function renderDay(){
+  renderRunning();
+  const t=today();
+  $("drTitle").textContent=dayView===t?"Сегодня":dayView===shiftDay(t,-1)?"Вчера":"Отчёт за день";
+  const d=new Date(dayView+"T12:00");
+  $("drDate").textContent=d.toLocaleDateString("ru-RU",{weekday:"short",day:"numeric",month:"short"});
+  $("dNext").disabled=dayView>=t;
+  const mine=items.filter(i=>curOf(i)===cur);
+  const day=mine.filter(i=>i.date===dayView);
+  const out=day.filter(i=>i.type==="out").reduce((s,i)=>s+i.amount,0);
+  const inc=day.filter(i=>i.type==="in").reduce((s,i)=>s+i.amount,0);
+  $("drOut").textContent=(out?"−":"")+fmt(out);$("drIn").textContent=(inc?"+":"")+fmt(inc);
+  const mk=dayView.slice(0,7);
+  const monthOut=mine.filter(i=>i.type==="out"&&(i.date||"").startsWith(mk)).reduce((s,i)=>s+i.amount,0);
+  const daysIn=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
+  const elapsed=t.startsWith(mk)?Number(t.slice(8,10)):(t<mk?0:daysIn);
+  const avgEl=$("drAvg");avgEl.textContent="";
+  if(monthOut>0&&elapsed>0){
+    const avg=monthOut/elapsed;
+    const diff=out-avg;
+    avgEl.append("В среднем в день в этом месяце: ");
+    const b=document.createElement("b");b.textContent=fmt(avg);avgEl.append(b);
+    if(out>0&&Math.abs(diff)>=avg*0.05)avgEl.append(". "+(dayView===t?"Сегодня":"В этот день")+" на "+fmt(Math.abs(diff))+(diff>0?" больше":" меньше")+" среднего.");
+    else if(out>0)avgEl.append(". Примерно как обычно.");
+  }
+  const by={};day.filter(i=>i.type==="out").forEach(i=>by[i.cat]=(by[i.cat]||0)+i.amount);
+  const cats=Object.entries(by).sort((a,b)=>b[1]-a[1]);const max=cats[0]?cats[0][1]:1;
+  const box=$("drCats");box.innerHTML="";
+  if(!cats.length){box.innerHTML='<div class="empty">'+(dayView===t?"Сегодня трат пока нет.":"В этот день трат не было.")+'</div>';return}
+  const cnt=day.filter(i=>i.type==="out").length;
+  cats.forEach(([c,v])=>{
+    const n=day.filter(i=>i.type==="out"&&i.cat===c).length;
+    const el=document.createElement("div");el.className="bar";
+    el.innerHTML='<span></span><span class="v"></span><div class="t"><i></i></div>';
+    el.children[0].textContent=c+(n>1?" · "+n+" "+plural(n,"покупка","покупки","покупок"):"");el.children[1].textContent=fmt(v);
+    el.querySelector("i").style.width=(v/max*100)+"%";box.appendChild(el);
+  });
+  if(cnt>1){const s=document.createElement("div");s.className="sub";s.textContent="Всего трат за день: "+cnt;box.appendChild(s)}
 }
 function setCur(c){
   cur=c;try{localStorage.setItem("money-cur",c)}catch(e){}
