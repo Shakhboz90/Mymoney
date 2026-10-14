@@ -100,7 +100,8 @@ h2{font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.12e
 .month button{background:var(--card2);border-color:var(--line)}
 .month span{font-weight:600}
 .sum{background:linear-gradient(155deg,#1C1709 0%,#121212 55%);border:1px solid #3A2F16;border-radius:20px;padding:20px}
-.sum .bal{border-bottom:1px solid #2E2717}
+.sum .bal{border-bottom:1px solid #2E2717;min-width:0}
+.sum .num{overflow-wrap:anywhere}
 .bal .lbl{color:var(--accent)}
 .bal .num{font-size:2.3rem;color:var(--accent);font-weight:700}
 .bal .num.c-out{color:var(--out)}
@@ -122,6 +123,10 @@ h2{font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.12e
 .debt{border-top-color:var(--line)}
 .debt .acts button,.debt .ret button{background:var(--card2);border-color:var(--line)}
 .toast{background:var(--accent);color:var(--accent-ink)}
+.seg.cur{grid-template-columns:repeat(3,1fr)}
+.seg.cur button{font-family:var(--mono);font-weight:700}
+.sub.other{color:var(--accent);margin-top:4px}
+.sub.other:empty{display:none}
 html,body{margin:0}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{-webkit-text-size-adjust:100%}
 </style>
 </head>
@@ -137,8 +142,14 @@ html,body{margin:0}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom
     </div>
   </div>
 
+  <div class="seg cur" id="curSeg" role="group" aria-label="Валюта">
+    <button type="button" data-c="EUR" aria-pressed="true">€ Евро</button>
+    <button type="button" data-c="USD" aria-pressed="false">$ Доллар</button>
+    <button type="button" data-c="UZS" aria-pressed="false">Сум</button>
+  </div>
+
   <section class="sum" aria-label="Итоги месяца">
-    <div class="bal"><div class="lbl">Остаток за месяц</div><div class="num" id="sBal">0,00 €</div><div class="sub" id="sRate"></div></div>
+    <div class="bal"><div class="lbl">Остаток за месяц</div><div class="num" id="sBal">0,00 €</div><div class="sub" id="sRate"></div><div class="sub other" id="sOther"></div></div>
     <div><div class="lbl">Доходы</div><div class="num c-in" id="sIn">0,00 €</div></div>
     <div><div class="lbl">Расходы</div><div class="num c-out" id="sOut">0,00 €</div></div>
   </section>
@@ -148,7 +159,7 @@ html,body{margin:0}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom
       <button type="button" id="tOut" aria-pressed="true">Расход</button>
       <button type="button" id="tIn" aria-pressed="false">Доход</button>
     </div>
-    <label class="amt"><input id="amount" inputmode="decimal" placeholder="0" aria-label="Сумма"><b>€</b></label>
+    <label class="amt"><input id="amount" inputmode="decimal" placeholder="0" aria-label="Сумма"><b id="amtSym">€</b></label>
     <div class="chips" id="cats" role="group" aria-label="Категория"></div>
     <div class="row">
       <input id="note" placeholder="Комментарий (необязательно)" maxlength="80">
@@ -211,7 +222,10 @@ const CATS={
   in:["Зарплата","Подработка","Возврат","Прочее"]
 };
 const $=id=>document.getElementById(id);
-const fmt=n=>n.toLocaleString("ru-RU",{minimumFractionDigits:2,maximumFractionDigits:2})+" €";
+const CUR={EUR:{sym:"€",dec:2,name:"евро"},USD:{sym:"$",dec:2,name:"долларах"},UZS:{sym:"сум",dec:0,name:"сумах"}};
+let cur="EUR";try{const c=localStorage.getItem("money-cur");if(CUR[c])cur=c}catch(e){}
+const curOf=x=>CUR[x&&x.cur]?x.cur:"EUR";
+const fmt=(n,c=cur)=>{const k=CUR[c]||CUR.EUR;return Number(n).toLocaleString("ru-RU",{minimumFractionDigits:k.dec,maximumFractionDigits:k.dec})+" "+k.sym};
 const pad=n=>String(n).padStart(2,"0");
 const today=()=>{const d=new Date();return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())};
 let type="out", cat=null, view=new Date(), items=[], db=null;
@@ -244,7 +258,7 @@ function check(){$("addBtn").disabled=!(amt()>0&&cat&&$("date").value)}
 $("amount").oninput=check;$("date").oninput=check;
 $("f").onsubmit=async e=>{
   e.preventDefault();if($("addBtn").disabled)return;
-  const it={type,amount:Math.round(amt()*100)/100,cat,note:$("note").value.trim(),date:$("date").value,created:Date.now()};
+  const it={type,cur,amount:Math.round(amt()*100)/100,cat,note:$("note").value.trim(),date:$("date").value,created:Date.now()};
   $("addBtn").disabled=true;
   try{
     await addItem(it);
@@ -264,12 +278,15 @@ $("next").onclick=()=>{view=new Date(view.getFullYear(),view.getMonth()+1,1);ren
 function render(){
   $("mlabel").textContent=view.toLocaleDateString("ru-RU",{month:"long",year:"numeric"}).replace(" г.","");
   const key=view.getFullYear()+"-"+pad(view.getMonth()+1);
-  const m=items.filter(i=>(i.date||"").startsWith(key));
+  const inMonth=items.filter(i=>(i.date||"").startsWith(key));
+  const m=inMonth.filter(i=>curOf(i)===cur);
+  const others=[...new Set(inMonth.filter(i=>curOf(i)!==cur).map(curOf))];
+  $("sOther").textContent=others.length?"Есть записи в "+others.map(c=>CUR[c].name).join(" и ")+": переключите валюту вверху":"";
   const inc=m.filter(i=>i.type==="in").reduce((s,i)=>s+i.amount,0);
   const out=m.filter(i=>i.type==="out").reduce((s,i)=>s+i.amount,0);
   /* debts move cash: lending takes money out, repayments bring it back */
   let lent=0,back=0,borrowed=0,repaid=0;
-  (typeof debts!=="undefined"?debts:[]).forEach(d=>{
+  (typeof debts!=="undefined"?debts:[]).filter(d=>curOf(d)===cur).forEach(d=>{
     if((d.date||"").startsWith(key)){if(d.dir==="took")borrowed+=d.amount;else lent+=d.amount}
     const pays=d.payments&&d.payments.length?d.payments:((d.returned||0)>0?[{date:d.closedAt||d.date,amount:d.returned}]:[]);
     pays.forEach(p=>{if((p.date||"").startsWith(key)){if(d.dir==="took")repaid+=p.amount;else back+=p.amount}});
@@ -279,6 +296,7 @@ function render(){
   $("sIn").textContent=fmt(inc);$("sOut").textContent=fmt(out);
   $("sBal").textContent=(bal<0?"−":"")+fmt(Math.abs(bal));
   $("sBal").className="num "+(bal<0?"c-out":"");
+  const L=$("sBal").textContent.length;$("sBal").style.fontSize=L>15?"1.5rem":L>12?"1.8rem":"";
   const parts=[];
   if(lent)parts.push("дал в долг "+fmt(lent));
   if(back)parts.push("вернули "+fmt(back));
@@ -344,7 +362,7 @@ function dCheck(){$("dAdd").disabled=!($("dName").value.trim()&&num($("dAmt").va
 $("dAdd").onclick=async()=>{
   if($("dAdd").disabled)return;$("dAdd").disabled=true;
   try{
-    await debtAdd({dir:dDir,name:$("dName").value.trim(),amount:Math.round(num($("dAmt").value)*100)/100,returned:0,note:$("dNote").value.trim(),date:$("dDate").value,created:Date.now(),closed:false});
+    await debtAdd({dir:dDir,cur,name:$("dName").value.trim(),amount:Math.round(num($("dAmt").value)*100)/100,returned:0,note:$("dNote").value.trim(),date:$("dDate").value,created:Date.now(),closed:false});
     $("dName").value="";$("dAmt").value="";$("dNote").value="";toast("Долг записан");
   }catch(e){toast("Не удалось сохранить, попробуйте ещё раз")}
   dCheck();
@@ -355,8 +373,8 @@ function debtRow(d){
   const r=document.createElement("div");r.className="debt"+(d.closed?" done":"");
   r.innerHTML='<div class="h"><span class="who"></span><span class="left"></span></div><div class="meta"></div><div class="prog"><i></i></div><div class="acts"></div>';
   r.querySelector(".who").textContent=(d.dir==="took"?"Я должен: ":"")+d.name;
-  const l=r.querySelector(".left");l.textContent=d.closed?"Закрыт":fmt(left);l.classList.add(d.dir==="took"?"c-out":"c-in");
-  r.querySelector(".meta").textContent=(d.dir==="took"?"Взял ":"Дал ")+fmt(d.amount)+" · "+dfmt(d.date)+((d.returned||0)>0?" · возвращено "+fmt(d.returned):"")+(d.note?" · "+d.note:"");
+  const l=r.querySelector(".left");l.textContent=d.closed?"Закрыт":fmt(left,curOf(d));l.classList.add(d.dir==="took"?"c-out":"c-in");
+  r.querySelector(".meta").textContent=(d.dir==="took"?"Взял ":"Дал ")+fmt(d.amount,curOf(d))+" · "+dfmt(d.date)+((d.returned||0)>0?" · возвращено "+fmt(d.returned,curOf(d)):"")+(d.note?" · "+d.note:"");
   r.querySelector(".prog i").style.width=Math.min(100,(d.returned||0)/d.amount*100)+"%";
   const acts=r.querySelector(".acts");
   const mk=(t,cls,fn)=>{const b=document.createElement("button");b.type="button";b.textContent=t;if(cls)b.className=cls;b.onclick=fn;acts.appendChild(b);return b};
@@ -365,7 +383,7 @@ function debtRow(d){
     mk(d.dir==="took"?"Отдал часть":"Вернул часть","",()=>{
       if(r.querySelector(".ret"))return;
       const box=document.createElement("div");box.className="ret";
-      box.innerHTML='<input inputmode="decimal" placeholder="Сколько, €"><button type="button">OK</button>';
+      box.innerHTML='<input inputmode="decimal" placeholder="Сколько"><button type="button">OK</button>';
       const inp=box.querySelector("input");inp.id="ret-"+d.id;
       box.querySelector("button").onclick=async()=>{
         const v=num(inp.value);if(!(v>0)){inp.focus();return}
@@ -381,9 +399,17 @@ function debtRow(d){
   });
   return r;
 }
+function setCur(c){
+  cur=c;try{localStorage.setItem("money-cur",c)}catch(e){}
+  document.querySelectorAll("#curSeg button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.c===c));
+  $("amtSym").textContent=CUR[c].sym;$("dAmt").placeholder="Сумма, "+CUR[c].sym;
+  renderDebts();
+}
+document.querySelectorAll("#curSeg button").forEach(b=>b.onclick=()=>setCur(b.dataset.c));
 function renderDebts(){
-  const open=debts.filter(d=>!d.closed).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
-  const done=debts.filter(d=>d.closed).sort((a,b)=>(b.closedAt||b.date||"").localeCompare(a.closedAt||a.date||""));
+  const mine=debts.filter(d=>curOf(d)===cur);
+  const open=mine.filter(d=>!d.closed).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+  const done=mine.filter(d=>d.closed).sort((a,b)=>(b.closedAt||b.date||"").localeCompare(a.closedAt||a.date||""));
   const sum=dir=>open.filter(d=>d.dir===dir).reduce((s,d)=>s+d.amount-(d.returned||0),0);
   $("dOwed").textContent=fmt(sum("gave"));$("dOwe").textContent=fmt(sum("took"));
   const L=$("dList");L.innerHTML="";
@@ -392,21 +418,21 @@ function renderDebts(){
   $("dDoneBox").hidden=!done.length;$("dDone").innerHTML="";done.forEach(d=>$("dDone").appendChild(debtRow(d)));
   render();
 }
-renderDebts();
+setCur(cur);
 
 /* ---------- backup / export / import ---------- */
 const q=s=>'"'+String(s??"").replace(/"/g,'""')+'"';
 const c2=n=>Number(n).toFixed(2).replace(".",",");
 function buildCsv(){
-  const rows=[["Дата","Тип","Категория","Сумма (€)","Комментарий"].map(q).join(";")];
+  const rows=[["Дата","Тип","Категория","Сумма","Валюта","Комментарий"].map(q).join(";")];
   [...items].sort((a,b)=>(a.date||"").localeCompare(b.date||"")||(a.created||0)-(b.created||0)).forEach(i=>{
-    rows.push([i.date,i.type==="in"?"Доход":"Расход",i.cat,(i.type==="in"?"":"-")+c2(i.amount),i.note].map(q).join(";"));
+    rows.push([i.date,i.type==="in"?"Доход":"Расход",i.cat,(i.type==="in"?"":"-")+c2(i.amount),CUR[curOf(i)].sym,i.note].map(q).join(";"));
   });
   if(debts.length){
-    rows.push("","Долги",["Дата","Тип","Кто","Сумма (€)","Возвращено (€)","Осталось (€)","Статус","Комментарий"].map(q).join(";"));
+    rows.push("","Долги",["Дата","Тип","Кто","Сумма","Возвращено","Осталось","Валюта","Статус","Комментарий"].map(q).join(";"));
     [...debts].sort((a,b)=>(a.date||"").localeCompare(b.date||"")).forEach(d=>{
       const r=d.returned||0;
-      rows.push([d.date,d.dir==="took"?"Я взял":"Я дал",d.name,c2(d.amount),c2(r),c2(Math.max(0,d.amount-r)),d.closed?"Закрыт":"Открыт",d.note].map(q).join(";"));
+      rows.push([d.date,d.dir==="took"?"Я взял":"Я дал",d.name,c2(d.amount),c2(r),c2(Math.max(0,d.amount-r)),CUR[curOf(d)].sym,d.closed?"Закрыт":"Открыт",d.note].map(q).join(";"));
     });
   }
   return "﻿"+rows.join("\r\n");
@@ -436,24 +462,26 @@ function parseCsvLine(line){
   out.push(cur);return out;
 }
 function fromCsv(text){
-  const lines=text.replace(/^﻿/,"").split(/\r?\n/);let mode="tx";const ni=[],nd=[];let t=Date.now();
+  const lines=text.replace(/^\uFEFF/,"").split(/\r?\n/);let mode="tx",hdr=[];const ni=[],nd=[];let t=Date.now();
+  const symToCur=v=>{v=String(v||"").trim().toLowerCase();return v==="$"||v==="usd"?"USD":(v==="сум"||v==="uzs"?"UZS":"EUR")};
   for(const ln of lines){
     if(!ln.trim())continue;
     const f=parseCsvLine(ln);
     if(f[0]==="Долги"){mode="debts";continue}
-    if(f[0]==="Дата")continue;
-    if(mode==="tx"&&f.length>=4){
-      const a=Math.abs(num(f[3]));if(!(a>0))continue;
-      ni.push({type:f[1]==="Доход"?"in":"out",amount:Math.round(a*100)/100,cat:f[2]||"Прочее",note:f[4]||"",date:f[0],created:t++});
-    }else if(mode==="debts"&&f.length>=6){
-      const a=num(f[3]);if(!(a>0))continue;
-      nd.push({dir:f[1]==="Я взял"?"took":"gave",name:f[2],amount:a,returned:num(f[4])||0,closed:f[6]==="Закрыт",note:f[7]||"",date:f[0],created:t++});
+    if(f[0]==="Дата"){hdr=f.map(h=>h.replace(/\s*\(.*\)\s*/,"").trim());continue}
+    const g=(name,def)=>{const k=hdr.indexOf(name);return k>=0?f[k]:def};
+    if(mode==="tx"){
+      const a=Math.abs(num(g("Сумма",f[3])));if(!(a>0))continue;
+      ni.push({type:g("Тип",f[1])==="Доход"?"in":"out",cur:symToCur(g("Валюта","€")),amount:Math.round(a*100)/100,cat:g("Категория",f[2])||"Прочее",note:g("Комментарий","")||"",date:g("Дата",f[0]),created:t++});
+    }else{
+      const a=num(g("Сумма",f[3]));if(!(a>0))continue;
+      nd.push({dir:g("Тип",f[1])==="Я взял"?"took":"gave",cur:symToCur(g("Валюта","€")),name:g("Кто",f[2]),amount:a,returned:num(g("Возвращено",f[4]))||0,closed:g("Статус","")==="Закрыт",note:g("Комментарий","")||"",date:g("Дата",f[0]),created:t++});
     }
   }
   return{items:ni,debts:nd};
 }
-const keyT=i=>[i.date,i.type,i.cat,i.amount,i.note||""].join("|");
-const keyD=d=>[d.date,d.dir,d.name,d.amount].join("|");
+const keyT=i=>[i.date,i.type,i.cat,i.amount,i.note||"",curOf(i)].join("|");
+const keyD=d=>[d.date,d.dir,d.name,d.amount,curOf(d)].join("|");
 $("importFile").onchange=async e=>{
   const file=e.target.files[0];e.target.value="";if(!file)return;
   let data;
